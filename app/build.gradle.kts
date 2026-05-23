@@ -22,6 +22,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            versionNameSuffix = ""
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -49,6 +52,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation("androidx.compose.material:material-icons-extended")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
@@ -56,4 +60,21 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+}
+
+tasks.whenTaskAdded {
+    if (name == "assembleDebug") {
+        doLast {
+            val apk = file("${layout.buildDirectory.get()}/outputs/apk/debug/app-debug.apk")
+            val renamed = file("${layout.buildDirectory.get()}/outputs/apk/debug/KeyesIOTHome.apk")
+            if (apk.exists()) apk.renameTo(renamed)
+        }
+    }
+    if (name == "bundleDebug") {
+        doLast {
+            val aab = file("${layout.buildDirectory.get()}/outputs/bundle/debug/app-debug.aab")
+            val renamed = file("${layout.buildDirectory.get()}/outputs/bundle/debug/KeyesIOTHome.aab")
+            if (aab.exists()) aab.renameTo(renamed)
+        }
+    }
 }

@@ -22,57 +22,48 @@ import java.net.Socket
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.net.InetSocketAddress
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.runtime.collectAsState
 
 @Composable
-fun SmartHomeScreen() {
+fun SmartHomeScreen(vm: SensorViewModel = viewModel()) {
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    val isConnected = remember { androidx.compose.runtime.mutableStateOf(false) }
+    var ip by remember { mutableStateOf("192.168.27.94") }
+
+    val isConnected by vm.isConnected.collectAsState()
+    val sensors by vm.sensors.collectAsState()
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(16.dp)
         ) {
-            // Header
-            var ip by remember { mutableStateOf("192.168.27.94") }
-
             Row(verticalAlignment = Alignment.CenterVertically) {
-
                 TextField(
                     value = ip,
                     onValueChange = { ip = it },
                     label = { Text("IP Address") },
                     modifier = Modifier.weight(1f)
                 )
-
                 Button(onClick = {
-                    scope.launch {
-                        val ok = testConnection(ip)
-                        if (ok) {
-                            isConnected.value = true
-                            snackbarHostState.showSnackbar("Connecté à $ip")
-                        } else {
-                            isConnected.value = false
-                            snackbarHostState.showSnackbar("Impossible de se connecter")
-                        }
-                    }
+                    if (isConnected) vm.disconnect() else vm.connect(ip)
                 }) {
-                    Text("CONNECT")
+                    Text(if (isConnected) "DISCONNECT" else "CONNECT")
                 }
-
-                // Indicateur visuel
                 Box(
                     modifier = Modifier
                         .size(20.dp)
                         .padding(start = 8.dp)
                         .background(
-                            if (isConnected.value) Color(0xFF4CAF50) else Color(0xFFF44336),
+                            if (isConnected) Color(0xFF4CAF50) else Color(0xFFF44336),
                             shape = CircleShape
                         )
                 )
@@ -81,63 +72,100 @@ fun SmartHomeScreen() {
             Spacer(modifier = Modifier.height(16.dp))
             Text("My Smart Home", style = MaterialTheme.typography.titleLarge)
 
+            val devices = listOf(
+                Triple("LED",     "a", "A"),
+                Triple("Window",  "b", "B"),
+                Triple("Music",   "c", "C"),
+                Triple("Whistle", "d", "D"),
+                Triple("Door",    "e", "E"),
+                Triple("Fan",     "f", "F"),
+            )
+
             LazyVerticalGrid(columns = GridCells.Fixed(3)) {
-                items(listOf("LED", "Window", "Music", "Whistle", "Door", "Fan")) { device ->
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.Lightbulb, contentDescription = device)
-                        Text(device)
+                items(devices) { (label, cmdOn, cmdOff) ->
+                    var on by remember { mutableStateOf(false) }
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Lightbulb,
+                            contentDescription = label,
+                            tint = if (on) Color(0xFFFFC107) else Color.Gray
+                        )
+                        Text(label)
+                        Switch(
+                            checked = on,
+                            enabled = isConnected,
+                            onCheckedChange = { checked ->
+                                on = checked
+                                vm.sendCommand(if (checked) cmdOn else cmdOff)
+                            }
+                        )
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Smart Lift", style = MaterialTheme.typography.titleLarge)
+            Text("Sensors", style = MaterialTheme.typography.titleLarge)
 
             Column {
-                SensorRow("Raindrop")
-                SensorRow("Harmful gas")
-                SensorRow("Presence")
-                SensorRow("Temperature")
-                SensorRow("Humidity")
+                SensorRow("Raindrop",    sensors.rainwater)
+                SensorRow("Harmful gas", sensors.gas)
+                SensorRow("Presence",    sensors.presence)
+                SensorRow("Temperature", sensors.temperature)
+                SensorRow("Humidity",    sensors.humidity)
             }
         }
     }
 }
 
 suspend fun testConnection(ip: String): Boolean {
-    return try {
-        val socket = Socket(ip, 80)
-        val out = socket.getOutputStream()
-        out.write("x".toByteArray())
-        out.flush()
-        Thread.sleep(500) // laisse le temps à l’ESP32 de répondre
-        socket.close()
-        true
-    } catch (e: Exception) {
-        false
+    return withContext(Dispatchers.IO) {
+        try {
+            val socket = Socket()
+            socket.connect(InetSocketAddress(ip, 80), 3000) // timeout 3s
+            val out = socket.getOutputStream()
+            // Envoyer une commande valide terminée par 's' (le délimiteur de l'ESP32)
+            // 'x' n'est pas une commande connue mais elle sera lue et ignorée
+            out.write("xs".toByteArray()) // 's' = terminateur de readStringUntil
+            out.flush()
+            Thread.sleep(200)
+            socket.close()
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 }
 
 @Composable
-fun SensorRow(label: String) {
+fun SensorRow(label: String, value: String) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(label)
-        Text("Value")
+        Text(value, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
 suspend fun sendCommand(ip: String, cmd: String): Boolean {
-    return try {
-        val socket = Socket(ip, 80)
-        val out = socket.getOutputStream()
-        out.write(cmd.toByteArray())
-        out.flush()
-        socket.close()
-        true
-    } catch (e: Exception) {
-        false
+    return withContext(Dispatchers.IO) {
+        try {
+            val socket = Socket()
+            socket.connect(InetSocketAddress(ip, 80), 3000)
+            val out = socket.getOutputStream()
+            // Toujours terminer par 's' pour que readStringUntil('s') se débloque
+            out.write("${cmd}s".toByteArray())
+            out.flush()
+            Thread.sleep(200)
+            socket.close()
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 }
